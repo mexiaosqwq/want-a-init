@@ -17,7 +17,13 @@ DeepSeek Harness 的模型驱动 `/init` 命令：让 agent 自己分析当前�
 
 ## 安装
 
-本地路径安装：
+### 从 GitHub
+
+```sh
+dsh plugin --profile web add github:mexiaosqwq/want-a-init
+```
+
+### 从本地路径
 
 ```sh
 dsh plugin --profile web add /path/to/want-a-init
