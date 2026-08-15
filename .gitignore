@@ -1,4 +1,5 @@
 node_modules/
+.codegraph/
 *.tgz
 *.log
 .DS_Store
