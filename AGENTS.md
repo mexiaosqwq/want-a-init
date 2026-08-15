@@ -24,7 +24,6 @@ DSH plugin that provides a model-driven `/init` command: it analyzes the current
 - Build/check: `bash scripts/build.sh` (no-op; verifies `lib/index.js` and `lib/index.d.ts` exist)
 - Syntax check: `node --check lib/index.js`
 - Install locally: `dsh plugin --profile web add <path-to-repo>`
-- Install from GitHub: `dsh plugin --profile web add github:<owner>/want-a-init`
 - Before installing the bundle, remove any manually added `init-command` row in `profiles/web/cordis.patch.yml` — it would override the distributed plugin.
 
 ## Conventions
