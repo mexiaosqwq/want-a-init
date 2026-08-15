@@ -1,0 +1,8 @@
+# want-a-init: model-driven /init command for DeepSeek Harness.
+#
+# This bundle inserts one row that registers the `init` slash command.
+# It only manages AGENTS.md; it never creates CLAUDE.md.
+- insert:
+    - id: init-command
+      name: want-a-init
+      config: {}
