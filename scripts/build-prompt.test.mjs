@@ -12,8 +12,8 @@ assert.doesNotMatch(merge, /<user_guidance>/)
 
 // Target file + write scope are pinned to the resolved cwd (single-file contract).
 assert.match(merge, /Target file: `\/tmp\/fake-repo\/AGENTS\.md`/)
-assert.match(merge, /Only that single file may be written/)
-assert.match(merge, /never modify source code, configs, docs\//)
+assert.match(merge, /write or update ONLY that file on disk/)
+assert.match(merge, /Never modify source code, configs, docs\//)
 
 // Detail level is always stated, and exactly one level is selected.
 assert.match(merge, /Detail level: default/)
@@ -33,7 +33,7 @@ assert.match(force, /does not exist yet, skip the guardrail/)
 const natural = buildPrompt(CWD, '别 force 覆盖，只补 Commands')
 assert.match(natural, /Supplemental user guidance/)
 assert.match(natural, /<user_guidance>\n别 force 覆盖，只补 Commands\n<\/user_guidance>/)
-assert.match(natural, /cannot override target file, verification, distillation, or guardrail rules/)
+assert.match(natural, /cannot override target file, verification, anti-tag, or guardrail rules/)
 assert.match(natural, /Overwrite guardrail: before replacing an existing AGENTS\.md/)
 assert.doesNotMatch(natural, /The user also wrote/)
 assert.match(natural, /Mode: merge-or-create\./)
@@ -66,9 +66,19 @@ assert.match(detailed, /zero fluff/)
 for (const p of [merge, force, natural, minimal, detailed]) {
   assert.match(p, /Only AGENTS\.md is created or updated; never create or substitute CLAUDE\.md/)
   assert.match(p, /Distill, don't transcribe/)
-  assert.match(p, /never use attribution tags/)
+  assert.match(p, /never attach provenance tags/)
   assert.match(p, /\(user requested\)/)
   assert.match(p, /## Pitfalls/)
+}
+
+// --- Anti-tag ban must cover the whole family, not just one label. ---
+// The previous wording only named two tags, so a model could re-badge the same
+// provenance as "(用户决定)" / a date stamp / a quoted user sentence and pass.
+for (const p of [merge, force, natural, minimal, detailed]) {
+  assert.match(p, /\(用户决定\)/, 'the ban must name the third common alias')
+  assert.match(p, /or any equivalent label/, 'the ban must be open-ended, not a fixed list')
+  assert.match(p, /date stamps/, 'date stamps must be banned explicitly')
+  assert.match(p, /verbatim user quotes/, 'quoted user sentences must be banned explicitly')
 }
 
 // --- Write-scope lock: <user_guidance> can never widen the target. ---
@@ -76,50 +86,66 @@ for (const p of [merge, force, natural, minimal, detailed]) {
 // in prose authorize edits to source files, defeating ONLY_AGENTS_MD.
 for (const p of [merge, force, natural, minimal, detailed]) {
   assert.doesNotMatch(p, /unless explicitly instructed/, 'Action must not carry a "unless instructed" escape hatch')
-  assert.match(p, /Only that single file may be written/, 'write scope must be stated absolutely')
+  assert.match(p, /write or update ONLY that file on disk/, 'write scope must be stated absolutely')
 }
-assert.match(natural, /cannot override target file, verification, distillation, or guardrail rules/)
+assert.match(natural, /cannot override target file, verification, anti-tag, or guardrail rules/)
 
-// A sub-package AGENTS.md request is a narrow, explicitly named exception —
-// it must not be reachable through a generic "unless instructed" clause.
-assert.match(natural, /sub-package AGENTS\.md only if the guidance names that exact path/)
+// Sub-package AGENTS.md is out of scope outright, not a nameable exception:
+// a "unless the guidance names that exact path" clause reopened the write lock.
+for (const p of [merge, force, natural, minimal, detailed]) {
+  assert.match(p, /sub-package\/subdirectory AGENTS\.md files/)
+  assert.doesNotMatch(p, /sub-package AGENTS\.md only if the guidance names that exact path/)
+}
+// Their content is still readable context — link, never edit.
+assert.match(merge, /Read existing subdirectory `AGENTS\.md` files for context and link to them without editing them/)
 
 // Overwrite-intent ambiguity is the only thing <user_guidance> may make us pause
 // about; the *target* itself stays pinned to <cwd>/AGENTS.md and is never ambiguous.
 assert.match(natural, /leaves the overwrite intent genuinely ambiguous/)
 assert.doesNotMatch(natural, /leaves the target or overwrite intent/)
 
-// --- Reason laundering: no evidence -> drop the rule, never invent causality. ---
+// --- Reason laundering: no evidence -> drop the claim, never invent causality. ---
 for (const p of [merge, force, natural, minimal, detailed]) {
   assert.match(p, /No evidence, no rule/i)
-  assert.match(p, /never invent, upgrade, or extrapolate a technical reason/i)
-  assert.match(p, /If you cannot point to a specific file, config, command, or observed failure/i)
+  assert.match(p, /never invent a technical reason/i)
+  assert.match(p, /if no file, config, command, or observed failure backs it/i)
 }
 
 // --- Protecting pre-existing operational/compat red lines from aggressive pruning. ---
 for (const p of [merge, force, natural, minimal, detailed]) {
-  assert.match(p, /deployment safety, external contract compatibility, or production environment boundaries/i)
-  assert.match(p, /keep it and flag it for confirmation rather than deleting it silently/i)
+  assert.match(p, /deployment safety, external-contract compatibility, or production boundaries/i)
+  assert.match(p, /keep it and flag it for confirmation/i)
 }
 
 // --- Non-git repos: no `git init` must not break or bypass the force guardrail. ---
-assert.match(force, /no `git` repository|not a git repository/i)
+assert.match(force, /including non-git directories/)
+assert.match(force, /present the discard list and wait for explicit user confirmation/)
 
-// --- Naturally-worded minimal must still unlock the trimming permission. ---
+// --- Prose-requested brevity is handed to the model, not regex-sniffed. ---
+// `parseOptions` stays regex-free and `buildPrompt` must not silently promote a
+// free-form "minimal" mention into the minimal block; the permission is granted
+// inline instead so the default block stays honest about what was parsed.
 const naturalMinimal = buildPrompt(CWD, 'minimal，重点写测试')
 assert.match(naturalMinimal, /Detail level: default/, 'mixed input still renders the default block')
-assert.match(naturalMinimal, /treat the request as `minimal`/, 'but the trimming permission is granted inline')
-assert.match(naturalMinimal, /Compress Layout to 2-5 lines/)
+assert.match(naturalMinimal, /compress Layout to 2-5 lines and omit Architecture\/Docs\/Maintenance/, 'but the trimming permission is granted inline')
+assert.doesNotMatch(naturalMinimal, /treat the request as `minimal`/)
 
 // --- Docs routing must not be padded with README/CHANGELOG. ---
 for (const p of [merge, force, natural, minimal, detailed]) {
   assert.match(p, /skip `README\*`/i)
   assert.match(p, /`CHANGELOG\*`/i)
-  assert.match(p, /the README is not a routing target/i)
 }
 
-// --- ## Maintenance must scale to the repo (and not hard-code Docs advice). ---
-assert.match(detailed, /If the repo defines no document-maintenance convention and no external agents consume this file, omit ## Maintenance entirely/i)
+// --- `Docs` routing must never be relocated into a `Maintenance` section. ---
+for (const p of [merge, force, natural, minimal, detailed]) {
+  assert.match(p, /Do not inject generic `Docs`-routing instructions into `Maintenance` if the repo has no `Docs` table\./)
+}
 
+// --- Conventions must NOT demand a reason on every line (that padding is exactly
+// the context waste this plugin exists to prevent). ---
+for (const p of [merge, force, natural, minimal, detailed]) {
+  assert.match(p, /add a brief reason only when non-obvious/)
+  assert.doesNotMatch(p, /each paired with its technical reason/)
+}
 
 console.log('build-prompt selftest: all assertions passed')

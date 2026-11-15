@@ -41,10 +41,20 @@ function harness({ cwd = '/tmp/fake', service, logger, agentExtra = {} } = {}) {
   // SECTION_ORDERS: after every policy block, before the first tool section.
   assert.equal(h.sections[0].order, 650)
   // The section must not license creating AGENTS.md during ordinary tasks.
-  assert.match(h.sections[0].text, /never create one during normal tasks/)
-  assert.match(h.sections[0].text, /Default action is NO EDIT/)
+  assert.match(h.sections[0].text, /never create one mid-workflow/)
+  assert.match(h.sections[0].text, /Default to NO EDIT/)
   assert.match(h.sections[0].text, /\(用户要求\)/)
   assert.match(h.sections[0].text, /Only AGENTS\.md is created or updated/)
+  // Both guardrails that used to live only in the maintenance section now ride
+  // inside DISTILL_RULE, so they must survive in the always-on text too.
+  assert.match(h.sections[0].text, /deployment safety, external-contract compatibility, or production boundaries/)
+  assert.match(h.sections[0].text, /No evidence, no rule/)
+  assert.match(h.sections[0].text, /date stamps/)
+  assert.match(h.sections[0].text, /verbatim user quotes/)
+  // …but one-off /init-only guidance (the reference skeleton, the scoped
+  // write-lock) must stay out of the per-round section.
+  assert.doesNotMatch(h.sections[0].text, /## Project/)
+  assert.doesNotMatch(h.sections[0].text, /Detail level:/)
 }
 
 // Main path: /init force is delivered as wake-up injected context, NOT a user turn.
