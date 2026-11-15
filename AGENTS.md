@@ -6,7 +6,7 @@ DSH plugin that provides a model-driven `/init` command: it analyzes the current
 
 - Type: DeepSeek Harness host plugin — provides a slash command plus a persistent system-prompt maintenance section; no client/UI.
 - Language: plain ESM JavaScript; no build step, `lib/` is committed directly.
-- Entry: `lib/index.js` exports `name`, `inject`, and `apply`.
+- Entry: `lib/index.js` exports `name`, `inject`, `Config`, `SOURCE_KIND`, `parseOptions`, `buildPrompt`, `apply` — `lib/index.d.ts` must mirror all seven (checked by diffing against `Object.keys(import('./lib/index.js'))`).
 - Plugin identity: command registered as `init`; patch/loader id is `init-command` (bundle name `want-a-init`).
 - Distribution: GitHub `mexiaosqwq/want-a-init`; also installable from a local path.
 
@@ -35,11 +35,14 @@ want-a-init/
 - Install from GitHub: `dsh plugin --profile web add github:mexiaosqwq/want-a-init`
 - Install locally: `dsh plugin --profile web add <path-to-repo>`
 - Restart after install: `dsh web`
+- Verify the bundle is actually mounted (not just installed): the host `Config` inspect provider should list `include:init-command` with `patchId: init-command` and `status: schema`; a session system prompt should contain the `agents-md-maintenance` section. Presence in `profiles/web/package.json` alone proves nothing.
 - Before installing the bundle, remove any manually added `init-command` row in `profiles/web/cordis.patch.yml` — it would override the distributed plugin.
 
 ## Architecture
 
 - `lib/index.js` holds all runtime logic:
+  - All three modes differ only in the length-goal sentence: measured prompt diff is exactly 2 lines for `detailed` vs default and for `minimal` vs default (`minimal` swaps in "roughly 40 lines or fewer", `detailed` in "more thorough, still no fluff"). `force` is the only mode that changes structure, adding the discard guardrail. So do not assume `detailed` or `minimal` unlocks or trims sections — if a mode needs different content, that must be added explicitly, and a new mode needs its own test assertion.
+  - The command definition sets no `recordInput`, so `/init` arguments stay out of the session log by default; set it only if the input must be replayable.
   - `buildPrompt(cwd, rawInput)` (exported, tested by `scripts/build-prompt.test.mjs` across merge/force/free-form/minimal) builds the `/init` prompt; `force` → overwrite, otherwise merge-or-create; `minimal`/`detailed` adjust length goal; includes a fill-in skeleton (`Project`, `Layout`, `Docs`, `Commands`, `Architecture`, `Conventions`, `Pitfalls`, `Maintenance`). Before writing, the prompt mandates reconstructing recent history: session events plus evidence outside the agent's own context (recent git history, working-tree state, files touched this session, handover docs) — because context compaction may have erased the conversation's early parts, and git evidence survives what session memory does not. It enforces a two-sided distill filter, one-line evidence tags for incidents, executable decision tests, one-fact-one-home pointers, most-used-first ordering, an annotated Layout tree — a dense map: same-pattern files merge into one counted directory line (`tests/ ← 31 .test.ts` style, key members named), only files with their own story (entrypoint/core/trap) get a dedicated line, annotations follow repo reality (gotcha where real, "generated, do not edit" where true) — bare uncounted paths and full-file dumps are both noise, a trigger-based Docs routing table (scenario -> doc -> question it answers; a doc with no routing line never gets read again), reading-moment section extensions, and reverse-pruning. Force mode carries a guardrail: list discarded entries first; proceed same-turn only if git-tracked, otherwise wait for user confirmation; if the file does not exist yet, skip the guardrail and create it.
   - `parseOptions(rawInput)` (exported, tested by `scripts/parse-options.test.mjs`) parses options strictly: only when the input (ignoring whitespace/commas) is made of bare known tokens (`force|minimal|detailed`) are they applied — `minimal`+`detailed` sets `conflict` (handler surfaces it, minimal wins); non-empty anything-else is `naturalLanguage: true` and is passed verbatim to the model for interpretation (negations like 「别 force」 cannot misfire a regex); empty input is plain default mode (`naturalLanguage: false`).
   - Shared rule strings `ONLY_AGENTS_MD` and `DISTILL_RULE` at the top of `lib/index.js` are the single source of truth for rules repeated across the command prompt and the persistent maintenance section — edit them there, never inline duplicate copies.
@@ -63,7 +66,7 @@ want-a-init/
 
 ## Pitfalls
 
-- `write` tool fails with EACCES when creating a NEW file on this host (Termux hard-link is environment-level denied; error form: `permission denied, link '<tmp>/*.tmp' -> '<target>'` — 2026-09-25, `scripts/parse-options.test.mjs` hit it). Fallback: create via bash heredoc (`cat > file <<'EOF'`). Editing existing files (rename path) and bash writes are unaffected.
+- If `write` fails creating a NEW file with `permission denied, link '<tmp>/*.tmp' -> '<target>'`, the fs-local patch is missing — run `dsh-fix` and restart; do not fall back to bash heredoc as a habit. Creating new files through `write` works on a patched host (re-verified 2026-11-15: succeeded both in `~/tmp` and inside the repo working tree; the unpatched 2026-09-25 failure used `link()` where the current build stages then renames).
 - `edit` requires reading the file first (DSH fs-observation-policy gate: `file has not been read` rejection) — always read before edit, even if content is fresh in context.
 - Test assertions must follow intent, not implementation: the empty-input bug (`naturalLanguage: true` for `''`) shipped because its assertion copied the wrong behavior and stayed green. When prompt semantics change, update the assertion first, watch it go red, then fix the code.
 - Local `link:` installs fail without `pnpm install` in the repo: the plugin cannot resolve `@deepseek-ai/dsh-llm`, so `/init` never appears in the client.
