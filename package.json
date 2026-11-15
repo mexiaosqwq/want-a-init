@@ -1,6 +1,6 @@
 {
   "name": "want-a-init",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Model-driven /init command for DeepSeek Harness: analyzes the current project and generates/updates a high-signal AGENTS.md.",
   "type": "module",
   "main": "lib/index.js",
@@ -36,9 +36,9 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.4",
-    "@deepseek-ai/dsh-commands": "^0.2.0-rc.2",
-    "@deepseek-ai/dsh-llm": "^0.2.0-rc.2",
-    "@deepseek-ai/schemastery": "^3.18.4"
+    "@deepseek-ai/cordis": "~4.1.0",
+    "@deepseek-ai/dsh-commands": "^0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm": "^0.2.2-rc.1",
+    "@deepseek-ai/schemastery": "^3.19.0"
   }
 }
