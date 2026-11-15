@@ -37,7 +37,14 @@ function harness({ cwd = '/tmp/fake', service, logger, agentExtra = {} } = {}) {
   assert.match(def.input.hint, /free-form guidance/)
   assert.equal(h.sections.length, 1)
   assert.equal(h.sections[0].name, 'agents-md-maintenance')
-  assert.equal(h.sections[0].order, 50)
+  // 650 sits between TEAM_POLICY (600) and PTC_ONLY (800) in the host's
+  // SECTION_ORDERS: after every policy block, before the first tool section.
+  assert.equal(h.sections[0].order, 650)
+  // The section must not license creating AGENTS.md during ordinary tasks.
+  assert.match(h.sections[0].text, /never create one during normal tasks/)
+  assert.match(h.sections[0].text, /Default action is NO EDIT/)
+  assert.match(h.sections[0].text, /\(用户要求\)/)
+  assert.match(h.sections[0].text, /Only AGENTS\.md is created or updated/)
 }
 
 // Main path: /init force is delivered as wake-up injected context, NOT a user turn.

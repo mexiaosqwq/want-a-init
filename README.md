@@ -1,30 +1,151 @@
 # want-a-init
 
-DeepSeek Harness 的模型驱动 `/init` 命令：让 agent 自己分析当前项目，生成/更新一份高信号、仓库特有的 `AGENTS.md`，并把“持续维护 AGENTS.md”写进 agent 运行逻辑。
+DeepSeek Harness 的**模型驱动** `/init` 命令：让 agent 自己读你的仓库，写出一份**仓库特有、可验证、不膨胀**的 `AGENTS.md`——并把"持续维护它"变成 agent 运行时的常驻意识，而不是一次性仪式。
 
 [![Version: 0.2.0](https://img.shields.io/badge/version-0.2.0-5B4CF0?style=flat-square)](package.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0B7285?style=flat-square)](LICENSE)
 [![DSH: Web Profile](https://img.shields.io/badge/DSH-Web%20Profile-5B4CF0?style=flat-square)](cordis.patch.yml)
 
-## 特性
+---
 
-- **模型驱动初始化**：不写死模板，`/init` 注入高信号 prompt，让 agent 分析仓库后生成/更新 `AGENTS.md`；
-- **填写式归纳**：提供固定骨架（`Project` / `Layout` / `Docs` / `Commands` / `Architecture` / `Conventions` / `Pitfalls` / `Maintenance`），要求 agent 从仓库证据中逐项填写、归纳——含带文件数的注释版仓库树与触发式 Docs 路由表；没有可验证内容的段落直接省略，不留占位符；
-- **模式**：`/init`（默认合并更新）、`/init force`（强制重写）、`/init minimal`（约 40 行内）、`/init detailed`（更详细但无废话）；
-- **常驻 agent 意识**：通过 DSH `systemPrompt` 注入 `agents-md-maintenance` 段落，让每个 agent 会话都记得维护 `AGENTS.md`（`config.enabled: false` 可关闭，`/init` 命令不受影响）；
-- **只维护 `AGENTS.md`**：刻意不创建 `CLAUDE.md`；
-- **纯 host 插件**：无 client/UI、无构建步骤，`lib/` 直接提交；peer 依赖对齐 DSH 0.2.2 运行时。
+## 为什么不是"又一个 AGENTS.md 模板生成器"
 
-## 安装
+模板生成器只会产出通用建议（"写测试"、"保持代码整洁"），这类文字对未来会话零价值——任何一个称职的模型本来就会做。`AGENTS.md` 真正值钱的只有三类东西：
 
-### 从 GitHub
+1. **本仓库独有的命令**——构建顺序、单测怎么单跑、必须先生成再类型检查的那种顺序依赖；
+2. **不读代码就会踩的坑**——生成物不能手改、需要哪个常驻服务、快照什么时候会漂；
+3. **边界与所有权**——哪个目录是核心、哪个包不能反向依赖。
+
+`/init` 的全部设计都围绕"只留这三类、其余全删"。它有骨架但**不写死模板**：骨架只是提出该回答的问题，答案必须来自仓库证据。
+
+## 快速开始
 
 ```sh
+# 从 GitHub 安装
 dsh plugin --profile web add github:mexiaosqwq/want-a-init
+
+# 或从本地 checkout 安装
+dsh plugin --profile web add /path/to/want-a-init
+
+dsh web          # 重启后生效
 ```
 
-### 从本地路径
+然后在任意会话里：
+
+```
+/init
+```
+
+agent 会在**同一回合**内只读调查仓库、写入 `AGENTS.md`、回报改了什么、删了什么陈旧内容。写盘范围绝对锁死在这一个文件：源码、配置、`docs/`、`CLAUDE.md` 一律不改，自由文本也无法给这些文件开后门；唯一例外是当指令点名了某个子包 `AGENTS.md` 的确切路径时，可以写那个文件——但依然绝不碰非 `AGENTS.md` 的文件。
+
+> **本地 `link:` 安装前置条件**：仓库内必须先 `pnpm install`。否则插件解析不到 `@deepseek-ai/dsh-llm`，`/init` 根本不会出现在客户端（见[排错](#排错)）。
+
+## 用法
+
+| 输入 | 模式 | 行为 |
+|---|---|---|
+| `/init` | 默认合并 | 已有文件→原地改进：保留仍然正确的规则，删掉陈旧/通用内容，与当前代码对齐 |
+| `/init force` | 覆盖 | 先列出**将被丢弃**的既有条目；git 已跟踪→同回合重建；未跟踪（含尚未 `git init` 的目录，视同最严格情形）→**等用户确认**；文件不存在→跳过护栏直接创建 |
+| `/init minimal` | 裁剪 | 只留生存必需的事实：Project 身份、精确 Commands（含顺序）、关键 Pitfalls；Layout 压到 2–5 行；可省略 Architecture / Docs / Maintenance |
+| `/init detailed` | 展开 | 允许展开模块边界、数据/控制流、测试前置与夹具、环境搭建、可复用的 playbook——但每条仍须挣得自己的上下文成本 |
+| `/init 只补 Commands，别动其他` | 自由文本 | 选项之外的任何输入都会**原样**交给模型解释，不对整句做模式猜测；唯一例外是文本里出现独立的 `minimal` 词时解锁裁剪授权（如 `/init minimal，重点写测试`），其余语义仍由模型自行理解 |
+
+几处刻意设计：
+
+- **选项解析是严格的**：只有输入（忽略空白与逗号后）**全部由** `force` / `minimal` / `detailed` 组成才当选项处理。所以「别 force」这类否定句不会误触发——它整句作为自由文本交给模型。
+- **`minimal` 与 `detailed` 同时给出**：`minimal` 胜出，回复里会明确提示冲突。
+- **模式差异在"授权"，不在提示词长度**：默认 / `minimal` / `detailed` 三档提示词几乎等长（63 / 64 / 63 行），换掉的是整块 `Detail level:` 授权。默认档不授权裁剪，说"精简"它也不会砍段；`minimal` 才有那个许可。
+- **/init 不自己写文件**：命令只负责把调研指令注入为上下文（`source.kind != 'user'`，客户端渲染成折叠的 context 行而非人类气泡），写盘由 agent 完成。中途取消则什么都不投递。
+
+## 产出形态
+
+八个可选段落，**没有可验证内容的段落直接省略**，不留占位符：
+
+```markdown
+# <项目名>
+
+## Project       一行身份 + 技术栈 + 真实入口 + 包边界
+## Layout        高密度注释地图：同模式文件合并成一条带计数（tests/ ← 31 *.test.ts）
+## Docs          文档路由表：<何时读> -> <路径>（<回答什么问题>）
+## Commands      精确命令：安装/构建/测试(全量+单跑)/lint/类型检查/生成/部署（标注先后）
+## Architecture  核心模块、数据流、所有权边界、非显然的不变量
+## Conventions   仓库特有规则与"禁止"项，每条带技术理由
+## Pitfalls      反复出现的失败模式
+## Maintenance   未来 agent 如何原地更新、如何反向清理
+```
+
+骨架是**地板不是天花板**：仓库若有值得单独阅读时刻的知识（发布 playbook、被否决过的方案列表），可以加段。但"给会话偏好或一次性指令开段"被明确禁止。
+
+## 反膨胀机制
+
+这是本插件与"让模型随便写写"的关键差别，也是常驻维护段与命令提示词**共用同一份规则字符串**的原因：
+
+1. **三类黑名单**：单任务指令 / 临时绕行 / 特性专属数值；对话与个人偏好（回复语言、语气、格式、习惯）；仅靠"用户要求""聊天里定的"支撑的未验证结论——一律不写。
+2. **禁止归因标签**：正文不得出现 `(用户要求)` / `(user requested)`。每条规则必须站在客观的代码/构建/测试因果上，写得成可执行判定（坏例："保持测试稳定"；好例："改完 `schema.prisma` 必须先跑 `pnpm codegen` 再类型检查，否则生成类型漂移"）。
+3. **无实证即丢弃**：指不出具体文件、配置、命令或已观察到的故障来支撑一条规则，就整条删掉——绝不脑补一个"听起来像工程因果"的假理由把它留下。这是防「理由洗白」的红线：封死标签还不够，得给模型一个合法的放弃出口。
+4. **外部红线例外**：既有条目若涉及部署安全、外部接口兼容、线上环境边界，即使本地代码与单测无法佐证，也保留并向用户确认，绝不因"本地没验证到"就静默删除。把「对话偏好」和「生产不变量」精确切开，误删比留着几条垃圾危险得多。
+5. **近期记忆降级为候选池**：会话记录和 `git diff` 只当作**低信任候选**——必须对着磁盘现状复核，剥掉任务细节，只放行跨任务的持久事实。上下文被压缩过也不会让幻觉得到官方认证。
+
+配套的两条写作纪律：**一个事实只有一个家**（详情写最具体的段，其它处只指路），**段内按使用频率排序且保持稳定**（让它是有序清单，不是堆积物）。
+
+## 常驻维护段
+
+除了一次性命令，插件还会往系统提示注入 `agents-md-maintenance` 段落（约 2.9k 字符，`order: 650`），让每个会话都带着维护意识跑：
+
+- **前置阀门**：工作区**没有** `AGENTS.md` 时不得新建（除非用户明确要求或跑 `/init`）；
+- **默认动作是"不编辑"**：多数任务对 `AGENTS.md` 的改动数应为 0；
+- **只在任务收尾评估**，且只在出现"可复用且经代码验证"的教训时才原地更新，并在回复里说明改了哪段；
+- **裁剪是条件动作，不是常驻命令**：只有本次任务本就决定更新 `AGENTS.md`、或某条旧规则直接误导了当前任务 / 指向刚删改的文件时才顺带清理；平时不主动发起整份清理（那是 `/init` 的活）。涉及部署安全、外部接口兼容、生产环境边界的既有禁令一律保留并向用户确认，绝不静默删除；
+- **文档路由**：本次新建的长期文档若活到任务收尾，给它自描述头部并在**收尾时**补上 `Docs` 路由行（不在任务中途写，避免文档被改名/删除后留下死链），并清理死链。
+
+段落位置 `order: 650` 落在宿主 `SECTION_ORDERS` 的 `TEAM_POLICY`(600) 与 `PTC_ONLY`(800) 之间——在全部策略块之后、首个工具段之前，是"指导"而非最高优先级指令。
+
+## 开发
 
 ```sh
-dsh plugin --profile web add /path/to/want-a-init
+pnpm install
+bash scripts/build.sh     # 存在性检查 + 跑全部自测
 ```
+
+完整验证链（改了 `lib/index.js` 就必须全跑）：
+
+```sh
+node --check lib/index.js
+node scripts/parse-options.test.mjs    # 选项解析严格性、否定句不误触发、空输入=默认档
+node scripts/build-prompt.test.mjs     # 五模式提示词 + 分隔符逃逸防护 + 分支暂停理由
+node scripts/apply-smoke.test.mjs      # 真依赖链：注册→投递→段落→enabled 门控→cwd 回退/取消
+```
+
+```text
+want-a-init/
+├─ lib/index.js                  ← 全部运行时逻辑（唯一该手改的源码）
+├─ lib/index.d.ts                ← 类型镜像，必须与 7 个导出保持一致
+├─ scripts/                      ← build.sh + 3 个自测
+├─ cordis.patch.yml              ← loader row（id: init-command）
+└─ package.json / pnpm-lock.yaml ← lockfile 入库保可复现安装
+```
+
+`lib/index.js` 导出 7 个名字，`lib/index.d.ts` 必须逐一镜像：`name` · `inject` · `Config` · `SOURCE_KIND` · `parseOptions` · `buildPrompt` · `apply`。其中 `parseOptions` / `buildPrompt` 是公开的纯函数，可直接 import 做自定义流程或断言测试。
+
+面向 agent 的仓库知识（命令、架构细节、坑位）在 [`AGENTS.md`](AGENTS.md)，改代码前先读它。
+
+## 排错
+
+| 症状 | 原因 | 处置 |
+|---|---|---|
+| `/init` 不出现在客户端 | 本地 `link:` 安装但没跑 `pnpm install`，解析不到 `@deepseek-ai/dsh-llm` | 仓库内 `pnpm install` 后重启 |
+| 命令在、但系统提示没有维护段 | `config.enabled: false`，或 bundle 未真正挂载 | 查 `Config` inspect 的 `include:init-command` |
+| 段落重复/行为像是旧版本 | `profiles/web/cordis.patch.yml` 里手写的 `init-command` 行遮蔽了 bundle | 删掉该行后重启 |
+| 改完代码没生效 | 宿主按进程缓存插件 | 重启 `dsh web` |
+| 新建文件报 `EACCES ... link '*.tmp'` | 宿主 fs-local 降级路径缺失（与本插件无关） | 跑 `dsh-fix` 后重启 |
+
+## 非目标
+
+- **不写 `CLAUDE.md`**，也不创建任何替代性指令文件；只维护 `AGENTS.md`。
+- **不替你决定仓库长什么样**：没有可验证依据的段落就省略，宁可短。
+- **不动你的源码、配置和文档**：`/init` 的写盘范围就是那一个文件。
+- **不做一次性报告的存档库**：审计、周报、工作日志不属于 `AGENTS.md`。
+
+## License
+
+[MIT](LICENSE)
