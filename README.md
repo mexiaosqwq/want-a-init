@@ -36,7 +36,7 @@ dsh web          # 重启后生效
 /init
 ```
 
-agent 会在**同一回合**内只读调查仓库、写入 `AGENTS.md`、回报改了什么、删了什么陈旧内容。写盘范围绝对锁死在这一个文件：源码、配置、`docs/`、`CLAUDE.md`、子包/子目录的 `AGENTS.md` 一律不改，自由文本也无法给这些文件开后门（子包的 `AGENTS.md` 只作为**上下文**读取，不写）。
+提示词要求 agent 只读调查仓库，只创建或更新当前工作目录的 `AGENTS.md`，并回报改动和删去的陈旧内容。子目录的 `AGENTS.md` 仅供参考。**这是提示词约束，不是文件工具的写入权限限制。**
 
 > **本地 `link:` 安装前置条件**：仓库内必须先 `pnpm install`。否则插件解析不到 `@deepseek-ai/dsh-llm`，`/init` 根本不会出现在客户端（见[排错](#排错)）。
 
@@ -55,8 +55,10 @@ agent 会在**同一回合**内只读调查仓库、写入 `AGENTS.md`、回报�
 - **选项解析是严格的**：只有输入（忽略空白与逗号后）**全部由** `force` / `minimal` / `detailed` 组成才当选项处理。所以「别 force」这类否定句不会误触发——它整句作为自由文本交给模型。
 - **`minimal` 与 `detailed` 同时给出**：`minimal` 胜出，回复里会明确提示冲突。
 - **模式差异在"授权"，不在提示词长度**：默认 / `minimal` / `detailed` 三档提示词几乎等长（61 / 62 / 61 行），换掉的是整块 `Detail level:` 授权。默认档面向"该写的都写、别灌水"，`minimal` 才是明确授权砍段。
-- **自由文本不走正则嗅探**：`buildPrompt` 全文只在**一处**用正则——把用户输入里的 `</user_guidance>` 中和掉，防止分隔符被从内部逃逸。像 `/init minimal，重点写测试` 这种混合输入不会被提升成 `minimal` 模式（`Detail level:` 块会如实显示 `default`），但解释句里已经写明"要精简就压 Layout、砍 Architecture/Docs/Maintenance"，模型照办即可。少一条正则、少一条分支、少一层误判。
-- **/init 不自己写文件**：命令只负责把调研指令注入为上下文（`source.kind != 'user'`，客户端渲染成折叠的 context 行而非人类气泡），写盘由 agent 完成。中途取消则什么都不投递。
+- **自由文本不走正则嗅探**：`buildPrompt` 不对自由文本做模式判断——像 `/init minimal，重点写测试` 这种混合输入不会被提升成 `minimal` 模式（`Detail level:` 块会如实显示 `default`），但解释句里已经写明"要精简就压 Layout、砍 Architecture/Docs/Maintenance"，模型照办即可。少一条正则、少一条分支、少一层误判。全文仅剩两类正则：中和自由文本里的 `</user_guidance>`（防分隔符被从内部逃逸），以及转义 `cwd` 里的换行 / 反引号 / 反斜杠（`cwd` 来自环境，目录名合法可含这些字符，不转义会凭空多出提示词行或提前闭合代码段）。
+- **自由文本也带覆盖意图**：`/init` 后接"覆盖重写"这类自由文本时，`Mode:` 字段不会硬写 `merge-or-create`，而是标注"prose may request an overwrite"并要求核对后面的 `<user_guidance>` 再决定——否则硬字段与随后"若明确要求覆盖则套用护栏"的段落互相矛盾。裸 `/init` 与纯选项输入保持无歧义的单一取值。
+- **投递前检查**：命令先让宿主验证实时工作目录。目录无法验证，或任务投递前已取消，都不唤醒 agent；命令不会撤回已经入队的任务。
+- **投递与参数记录**：调研指令作为上下文通知交给 agent（`source.kind = 'want-a-init'`、`form: 'notice'`，客户端渲染成折叠的 context 行而非人类气泡），写盘由 agent 完成。命令不把参数写入 `command/run.args`，但模型仍会收到自由文本，不要在参数里填敏感信息。
 
 ## 产出形态
 
@@ -121,7 +123,8 @@ bash scripts/build.sh     # 存在性检查 + 跑全部自测
 node --check lib/index.js
 node scripts/parse-options.test.mjs    # 选项解析严格性、否定句不误触发、空输入=默认档
 node scripts/build-prompt.test.mjs     # 五模式提示词 + 分隔符逃逸防护 + 分支暂停理由
-node scripts/apply-smoke.test.mjs      # 真依赖链：注册→投递→段落→enabled 门控→cwd 回退/取消
+# apply smoke：注册、参数记录开关、投递、段落门控、目录验证和取消
+node scripts/apply-smoke.test.mjs
 ```
 
 ```text
@@ -151,7 +154,7 @@ want-a-init/
 
 - **不写 `CLAUDE.md`**，也不创建任何替代性指令文件；只维护 `AGENTS.md`。
 - **不替你决定仓库长什么样**：没有可验证依据的段落就省略，宁可短。
-- **不动你的源码、配置和文档**：`/init` 的写盘范围就是那一个文件。
+- **不以源码、配置和文档为更新目标**：命令指向当前工作目录的 `AGENTS.md`。
 - **不做一次性报告的存档库**：审计、周报、工作日志不属于 `AGENTS.md`。
 
 ## License

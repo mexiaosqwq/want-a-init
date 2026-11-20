@@ -33,6 +33,7 @@ function harness({ cwd = '/tmp/fake', service, logger, agentExtra = {} } = {}) {
   assert.equal(h.registered.length, 1)
   const def = h.registered[0]
   assert.equal(def.name, 'init')
+  assert.equal(def.recordInput, false, 'do not duplicate raw guidance in command/run args')
   assert.match(def.description, /AGENTS\.md/)
   assert.match(def.input.hint, /free-form guidance/)
   assert.equal(h.sections.length, 1)
@@ -86,23 +87,18 @@ function harness({ cwd = '/tmp/fake', service, logger, agentExtra = {} } = {}) {
   assert.equal(h.agent.msg.source.kind, SOURCE_KIND)
 }
 
-// No workingDirectory service composed -> creation-time header cwd.
-{
-  const h = harness({ cwd: '/header/dir' })
-  const r = await h.run('')
-  assert.equal(r.kind, 'success')
-  assert.match(h.agent.sent.msg.content[0].text, /\/header\/dir/)
-}
-
-// ensure() failure is warned and falls back to the header cwd (no data loss).
-{
+// Missing service or a failed directory validation must not queue an order.
+for (const [label, service] of [
+  ['missing service', undefined],
+  ['validation error', { ensure: async () => { throw new Error('directory unavailable') } }],
+]) {
   const warns = []
-  const h = harness({ cwd: '/hdr', service: { ensure: async () => { throw new Error('boom') } }, logger: { warn: (...a) => warns.push(a) } })
+  const h = harness({ cwd: '/header/dir', service, logger: { warn: (...args) => warns.push(args) } })
   const r = await h.run('')
-  assert.equal(r.kind, 'success')
-  assert.match(h.agent.sent.msg.content[0].text, /\/hdr/)
-  assert.equal(warns.length, 1)
-  assert.match(warns[0][0], /working directory lookup failed/)
+  assert.equal(r.kind, 'error', label)
+  assert.equal(h.agent.sent, undefined, label)
+  assert.equal(h.agent.msg, undefined, label)
+  if (service) assert.match(warns[0]?.[0] ?? '', /working directory lookup failed/)
 }
 
 // Cancellation before start: no delivery at all.
@@ -124,13 +120,23 @@ function harness({ cwd = '/tmp/fake', service, logger, agentExtra = {} } = {}) {
   assert.equal(h.agent.sent, undefined)
 }
 
-// Missing cwd: clean error, no delivery. (agentExtra overrides the harness's
-// default cwd; passing `cwd: undefined` would hit the destructuring default.)
+// Cancellation while ensure() is in flight must also prevent delivery on fulfillment.
 {
-  const h = harness({ agentExtra: { session: { header: {} } } })
+  const ac = new AbortController()
+  const h = harness({ service: { ensure: async () => { ac.abort(); return '/live/cwd' } } })
+  const r = await h.run('force', ac.signal)
+  assert.equal(r.kind, 'error')
+  assert.equal(h.agent.sent, undefined)
+  assert.equal(h.agent.msg, undefined)
+}
+
+// No validated directory returned: clean error, no delivery.
+{
+  const h = harness({ service: { ensure: async () => undefined } })
   const r = await h.run('')
   assert.equal(r.kind, 'error')
   assert.equal(h.agent.sent, undefined)
+  assert.equal(h.agent.msg, undefined)
 }
 
 // Option feedback is preserved in the human-facing result text.
